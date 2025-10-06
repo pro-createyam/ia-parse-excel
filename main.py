@@ -94,6 +94,9 @@ app = create_app()
 _RE_NUMERIC_SERIAL = re.compile(r"^\d{1,5}(?:[.,]\d+)?$")  # ex: "45000", "45000.0", "45000,5"
 _RE_MIN = re.compile(r"^\s*(\d+)\s*(?:m|min|mn)\s*$", re.IGNORECASE)
 _RE_H = re.compile(r"^\s*(\d+)\s*h(?:\s*(\d{1,2}))?(?:m|mn)?\s*$", re.IGNORECASE)
+# Jours (nouvelles regex)
+_RE_DAYS_DEC = re.compile(r"^\s*([+-]?\d+(?:[.,]\d+)?)\s*(?:j|jour|jours|d|day|days)?\s*$", re.IGNORECASE)
+_RE_HALF_TOK = re.compile(r"^\s*(?:1/2|0[.,]?5|demi|half|mi[-\s]?journ[eé]e|am|pm)\s*$", re.IGNORECASE)
 
 def _parse_rules(rules_raw: Optional[str]) -> Dict[str, Any]:
     """
@@ -129,7 +132,7 @@ def _parse_holidays(holiday_raw: Optional[str]) -> List[str]:
     """
     Accepte:
       - JSON: '["2025-01-01","2025-05-01"]'
-      - CSV/texte: '2025-01-01, 2025-05-01' ou séparé par ';' ou retours à la ligne
+      - CSV/texte: '2025-01-01, 2025-05-01' ou retours à la ligne
       - Nombres Excel (sérialisés) si présents, y compris en texte "45000.0"
     Retourne une liste ISO 'YYYY-MM-DD' (dédupliquée, ordre préservé).
     """
@@ -310,6 +313,96 @@ def _parse_hours_to_decimal(s: Any) -> Optional[float]:
         return round(float(txt), 2)
     except Exception:
         return None
+
+
+# ─────────────── Nouvelles fonctions: jours ↔ heures ───────────────
+
+def _parse_days(x: Any) -> Optional[float]:
+    """
+    Parse un nombre de jours à partir de :
+      - décimal : '1.5', '1,5', '2', '0,25'
+      - suffixes : '1.5j', '2 jours', '3 day(s)', '2d'
+      - tokens demi-journée : 'demi', '1/2', '0.5', 'AM', 'PM', 'half', 'mi-journée'
+    Retourne un float (jours) ou None.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        try:
+            return round(float(x), 3)
+        except Exception:
+            return None
+
+    s = str(x).strip()
+    if not s:
+        return None
+
+    # demi-journée explicite
+    if _RE_HALF_TOK.fullmatch(s):
+        return 0.5
+
+    # décimal + unités facultatives (j, jour, days…)
+    m = _RE_DAYS_DEC.fullmatch(s.replace(",", "."))
+    if m:
+        try:
+            return round(float(m.group(1)), 3)
+        except Exception:
+            return None
+
+    return None
+
+
+def _hours_to_days(hours: Optional[float], rules: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """
+    Convertit des heures → jours selon la règle métier:
+      - Utilise rules['full_day_threshold'] (par défaut 8.0)
+      - Si half_day_min <= h <= half_day_max → 0.5
+      - Sinon h / full_day_threshold
+    Retourne un float en jours (arrondi 3 déc.) ou None si input invalide.
+    """
+    if hours is None:
+        return None
+    try:
+        h = float(hours)
+    except Exception:
+        return None
+    if h < 0:
+        return None  # on laisse les validations aval traiter si besoin
+
+    r = rules or {"full_day_threshold": 8.0, "half_day_min": 3.5, "half_day_max": 4.5}
+    fdt = float(r.get("full_day_threshold", 8.0))
+    hmin = float(r.get("half_day_min", 3.5))
+    hmax = float(r.get("half_day_max", 4.5))
+
+    if hmin <= h <= hmax:
+        return 0.5
+
+    if fdt <= 0:
+        fdt = 8.0
+
+    return round(h / fdt, 3)
+
+
+def _days_to_hours(days: Optional[float], rules: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """
+    Convertit des jours → heures selon full_day_threshold (par défaut 8.0).
+    Retourne un float (heures, arrondi 2 déc.) ou None si input invalide.
+    """
+    if days is None:
+        return None
+    try:
+        d = float(days)
+    except Exception:
+        d = _parse_days(days)  # tente un parse libre si c'est du texte
+        if d is None:
+            return None
+
+    r = rules or {"full_day_threshold": 8.0}
+    fdt = float(r.get("full_day_threshold", 8.0))
+    if fdt <= 0:
+        fdt = 8.0
+    return round(d * fdt, 2)
+
 # --- Upload guard ------------------------------------------------------------
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 
@@ -950,6 +1043,8 @@ async def parse_excel_upload(
     COL_HFER = detected.get("hs_feries") or detected.get("hrs_feries_091")
     # Absence (pour 'demi_journee' heuristique)
     COL_ABS = detected.get("absence")
+    # Jours (compteur direct côté client)
+    COL_NBJT = detected.get("nb_jt")
 
     rows: List[Dict[str, Any]] = []
     start = max(1, header_row_index + 1)
@@ -1011,6 +1106,15 @@ async def parse_excel_upload(
         if parts:
             hs_normales_agg = round(sum(parts), 2)
 
+        # Jours saisis (nb_jt) si dispo
+        nb_jt_val_raw = None
+        if COL_NBJT:
+            try:
+                nb_jt_val_raw = ws[f"{COL_NBJT}{r}"].value
+            except Exception:
+                nb_jt_val_raw = None
+        nb_jt_days = _parse_days(nb_jt_val_raw)
+
         # Demi-journée (absence)
         abs_raw = None
         if COL_ABS:
@@ -1019,7 +1123,24 @@ async def parse_excel_upload(
             except Exception:
                 abs_raw = None
         abs_txt = (str(abs_raw).lower().strip()) if abs_raw is not None else ""
-        demi_j = True if ("demi" in abs_txt or "1/2" in abs_txt or "half" in abs_txt) else None
+        demi_j = True if ("demi" in abs_txt or "1/2" in abs_txt or "half" in abs_txt or abs_txt in {"am", "pm"}) else None
+
+        # Conversions heures ↔ jours
+        jours_calcules: Optional[float] = None
+        heures_calculees: Optional[float] = None
+
+        # Si uniquement heures → calcule jours
+        if (h_norm is not None) and (nb_jt_days is None or nb_jt_days == 0):
+            jours_calcules = _hours_to_days(h_norm, rules_dict)
+
+        # Si uniquement jours → calcule heures
+        if (nb_jt_days is not None) and (h_norm is None or h_norm == 0):
+            heures_calculees = _days_to_hours(nb_jt_days, rules_dict)
+
+        # Fallback demi-journée si rien fourni
+        if (h_norm is None) and (nb_jt_days is None) and demi_j:
+            jours_calcules = 0.5
+            heures_calculees = _days_to_hours(0.5, rules_dict)
 
         # Raw body (aperçu ligne)
         raw_vals = []
@@ -1039,6 +1160,9 @@ async def parse_excel_upload(
             "heures_travaillees_decimal": h_norm,
             "hs_normales": hs_normales_agg,
             "hs_ferie": hfer,
+            "nb_jt": nb_jt_days,              # <-- lecture directe (jours saisis)
+            "jours_calcules": jours_calcules, # <-- calcul si seulement heures
+            "heures_calculees": heures_calculees,  # <-- calcul si seulement jours
             "demi_journee": demi_j,
             "raw_body_text": raw_body_text,
         })
@@ -1049,6 +1173,7 @@ async def parse_excel_upload(
         "rows": rows,
         "rows_count": len(rows),
     }
+
 # ─────────────────────────── NEW: Template Intake
 @app.post("/template-intake")
 async def template_intake(
@@ -1340,6 +1465,26 @@ async def timesheet_intake(
             nom_v = nom_v or n
             prenom_v = prenom_v or p
 
+        # Heures et jours (nb_jt)
+        h_norm = _parse_hours_to_decimal(_val_at(r, "heures_norm"))
+        nb_jt_val = _parse_days(_val_at(r, "nb_jt"))
+
+        # Conversions heures ↔ jours
+        jours_calc: Optional[float] = None
+        heures_from_days: Optional[float] = None
+
+        if (h_norm is not None) and (nb_jt_val is None or nb_jt_val == 0):
+            jours_calc = _hours_to_days(h_norm, rules_dict)
+
+        if (nb_jt_val is not None) and (h_norm is None or h_norm == 0):
+            heures_from_days = _days_to_hours(nb_jt_val, rules_dict)
+
+        # Fallback demi-journée si rien de fourni
+        if (h_norm is None) and (nb_jt_val is None) and demi_j:
+            nb_jt_val = 0.5
+            jours_calc = 0.5
+            heures_from_days = _days_to_hours(0.5, rules_dict)
+
         preview_rows.append({
             "row_index_excel": r,
             "matricule": _val_at(r, "matricule"),
@@ -1348,11 +1493,14 @@ async def timesheet_intake(
             "prenom": prenom_v,
             "service": _val_at(r, "service"),
             "date": row_date,
-            "heures_norm_dec": _parse_hours_to_decimal(_val_at(r, "heures_norm")),
+            "heures_norm_dec": h_norm,
             "hs_25_dec": _parse_hours_to_decimal(_val_at(r, "hs_25")),
             "hs_50_dec": _parse_hours_to_decimal(_val_at(r, "hs_50")),
             "hs_100_dec": _parse_hours_to_decimal(_val_at(r, "hs_100")),
             "hs_feries_dec": _parse_hours_to_decimal(_val_at(r, "hs_feries")),
+            "nb_jt": nb_jt_val,                 # <-- lecture directe des jours saisis
+            "jours_calc": jours_calc,           # <-- calcul si seulement heures
+            "heures_from_days": heures_from_days,  # <-- calcul si seulement jours
             "demi_journee": demi_j,
             "is_holiday": is_holiday,
             "observations": _val_at(r, "observations"),
@@ -1398,4 +1546,5 @@ async def timesheet_intake(
         "rules_used": rules_dict,
         "holiday_dates": list(holidays),
     }
+
 
