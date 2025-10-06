@@ -1069,7 +1069,7 @@ async def parse_excel_upload(
         nom = " ".join(parts[:-1])
         return nom, prenom
 
-            if end < start:
+    if end < start:
         # Feuille sans données utiles sous l'entête
         return {
             "rules_used": rules_dict,
