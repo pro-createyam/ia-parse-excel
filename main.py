@@ -1069,7 +1069,7 @@ async def parse_excel_upload(
         nom = " ".join(parts[:-1])
         return nom, prenom
 
-        if end < start:
+            if end < start:
         # Feuille sans données utiles sous l'entête
         return {
             "rules_used": rules_dict,
@@ -1108,10 +1108,7 @@ async def parse_excel_upload(
         hfer = _hours_at(r, COL_HFER)
 
         hs_normales_agg = None
-        parts = [
-            x for x in (hs25, hs50, hs100)
-            if isinstance(x, (int, float)) and math.isfinite(x)
-        ]
+        parts = [x for x in (hs25, hs50, hs100) if isinstance(x, (int, float)) and math.isfinite(x)]
         if parts:
             hs_normales_agg = round(sum(parts), 2)
 
@@ -1169,9 +1166,9 @@ async def parse_excel_upload(
             "heures_travaillees_decimal": h_norm,
             "hs_normales": hs_normales_agg,
             "hs_ferie": hfer,
-            "nb_jt": nb_jt_days,              # <-- lecture directe (jours saisis)
-            "jours_calcules": jours_calcules, # <-- calcul si seulement heures
-            "heures_calculees": heures_calculees,  # <-- calcul si seulement jours
+            "nb_jt": nb_jt_days,               # jours saisis
+            "jours_calcules": jours_calcules,  # si seulement heures
+            "heures_calculees": heures_calculees,  # si seulement jours
             "demi_journee": demi_j,
             "raw_body_text": raw_body_text,
         })
