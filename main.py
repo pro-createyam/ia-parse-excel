@@ -1177,13 +1177,6 @@ async def parse_excel_upload(
         })
 
 
-    return {
-        "rules_used": rules_dict,
-        "holiday_dates": holidays,
-        "rows": rows,
-        "rows_count": len(rows),
-    }
-
 # ─────────────────────────── NEW: Template Intake
 @app.post("/template-intake")
 async def template_intake(
