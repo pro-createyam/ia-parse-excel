@@ -1069,7 +1069,7 @@ async def parse_excel_upload(
         nom = " ".join(parts[:-1])
         return nom, prenom
 
-    if end < start:
+        if end < start:
         # Feuille sans données utiles sous l'entête
         return {
             "rules_used": rules_dict,
@@ -1078,7 +1078,7 @@ async def parse_excel_upload(
             "rows_count": 0,
         }
 
-       for r in range(start, end + 1):
+    for r in range(start, end + 1):
         # Identité
         v_matricule = _val_at(r, "matricule") or _val_at(r, "matricule_salarie") or (
             ws[f"{COL_MATRICULE}{r}"].value if COL_MATRICULE else None
@@ -1175,6 +1175,13 @@ async def parse_excel_upload(
             "demi_journee": demi_j,
             "raw_body_text": raw_body_text,
         })
+
+    return {
+        "rules_used": rules_dict,
+        "holiday_dates": holidays,
+        "rows": rows,
+        "rows_count": len(rows),
+    }
 
 
 # ─────────────────────────── NEW: Template Intake
