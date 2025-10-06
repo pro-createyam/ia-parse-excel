@@ -1124,57 +1124,57 @@ async def parse_excel_upload(
             nb_jt_val_raw = None
     nb_jt_days = _parse_days(nb_jt_val_raw)
 
-        # Demi-journée (absence)
-        abs_raw = None
-        if COL_ABS:
-            try:
-                abs_raw = ws[f"{COL_ABS}{r}"].value
-            except Exception:
-                abs_raw = None
-        abs_txt = (str(abs_raw).lower().strip()) if abs_raw is not None else ""
-        demi_j = True if ("demi" in abs_txt or "1/2" in abs_txt or "half" in abs_txt or abs_txt in {"am", "pm"}) else None
-
-        # Conversions heures ↔ jours
-        jours_calcules: Optional[float] = None
-        heures_calculees: Optional[float] = None
-
-        # Si uniquement heures → calcule jours
-        if (h_norm is not None) and (nb_jt_days is None or nb_jt_days == 0):
-            jours_calcules = _hours_to_days(h_norm, rules_dict)
-
-        # Si uniquement jours → calcule heures
-        if (nb_jt_days is not None) and (h_norm is None or h_norm == 0):
-            heures_calculees = _days_to_hours(nb_jt_days, rules_dict)
-
-        # Fallback demi-journée si rien fourni
-        if (h_norm is None) and (nb_jt_days is None) and demi_j:
-            jours_calcules = 0.5
-            heures_calculees = _days_to_hours(0.5, rules_dict)
-
-        # Raw body (aperçu ligne)
-        raw_vals = []
+    # Demi-journée (absence)
+    abs_raw = None
+    if COL_ABS:
         try:
-            for row_tuple in ws.iter_rows(min_col=1, max_col=max_col, min_row=r, max_row=r, values_only=True):
-                raw_vals = list(row_tuple)
+            abs_raw = ws[f"{COL_ABS}{r}"].value
         except Exception:
-            pass
-        raw_body_text = " | ".join([str(x) for x in raw_vals if x is not None])[:1000]
+            abs_raw = None
+    abs_txt = (str(abs_raw).lower().strip()) if abs_raw is not None else ""
+    demi_j = True if ("demi" in abs_txt or "1/2" in abs_txt or "half" in abs_txt or abs_txt in {"am", "pm"}) else None
 
-        rows.append({
-            "matricule": v_matricule,
-            "nom": v_nom,
-            "prenom": v_prenom,
-            "cin": v_cin,
-            "date": v_date,
-            "heures_travaillees_decimal": h_norm,
-            "hs_normales": hs_normales_agg,
-            "hs_ferie": hfer,
-            "nb_jt": nb_jt_days,              # <-- lecture directe (jours saisis)
-            "jours_calcules": jours_calcules, # <-- calcul si seulement heures
-            "heures_calculees": heures_calculees,  # <-- calcul si seulement jours
-            "demi_journee": demi_j,
-            "raw_body_text": raw_body_text,
-        })
+    # Conversions heures ↔ jours
+    jours_calcules: Optional[float] = None
+    heures_calculees: Optional[float] = None
+
+    # Si uniquement heures → calcule jours
+    if (h_norm is not None) and (nb_jt_days is None or nb_jt_days == 0):
+        jours_calcules = _hours_to_days(h_norm, rules_dict)
+
+    # Si uniquement jours → calcule heures
+    if (nb_jt_days is not None) and (h_norm is None or h_norm == 0):
+        heures_calculees = _days_to_hours(nb_jt_days, rules_dict)
+
+    # Fallback demi-journée si rien fourni
+    if (h_norm is None) and (nb_jt_days is None) and demi_j:
+        jours_calcules = 0.5
+        heures_calculees = _days_to_hours(0.5, rules_dict)
+
+    # Raw body (aperçu ligne)
+    raw_vals = []
+    try:
+        for row_tuple in ws.iter_rows(min_col=1, max_col=max_col, min_row=r, max_row=r, values_only=True):
+            raw_vals = list(row_tuple)
+    except Exception:
+        pass
+    raw_body_text = " | ".join([str(x) for x in raw_vals if x is not None])[:1000]
+
+    rows.append({
+        "matricule": v_matricule,
+        "nom": v_nom,
+        "prenom": v_prenom,
+        "cin": v_cin,
+        "date": v_date,
+        "heures_travaillees_decimal": h_norm,
+        "hs_normales": hs_normales_agg,
+        "hs_ferie": hfer,
+        "nb_jt": nb_jt_days,               # <-- lecture directe (jours saisis)
+        "jours_calcules": jours_calcules,  # <-- calcul si seulement heures
+        "heures_calculees": heures_calculees,  # <-- calcul si seulement jours
+        "demi_journee": demi_j,
+        "raw_body_text": raw_body_text,
+    })
 
     return {
         "rules_used": rules_dict,
