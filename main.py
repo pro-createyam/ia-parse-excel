@@ -9,6 +9,8 @@ import json
 import re
 import logging
 import os
+import math 
+
 
 # Fuzzy
 from rapidfuzz import fuzz
@@ -1076,44 +1078,51 @@ async def parse_excel_upload(
             "rows_count": 0,
         }
 
-    for r in range(start, end + 1):
-        # Identité
-        v_matricule = _val_at(r, "matricule") or _val_at(r, "matricule_salarie") or (
-            ws[f"{COL_MATRICULE}{r}"].value if COL_MATRICULE else None
+   for r in range(start, end + 1):
+    # Identité
+    v_matricule = _val_at(r, "matricule") or _val_at(r, "matricule_salarie") or (
+        ws[f"{COL_MATRICULE}{r}"].value if COL_MATRICULE else None
+    )
+    v_cin = _val_at(r, "cin")
+
+    v_nom = _val_at(r, "nom")
+    v_prenom = _val_at(r, "prenom")
+
+    if (not v_nom or not v_prenom) and COL_FULLNAME:
+        n, p = split_full_name(
+            _val_at(r, "full_name") or (ws[f"{COL_FULLNAME}{r}"].value if COL_FULLNAME else None)
         )
-        v_cin = _val_at(r, "cin")
+        v_nom = v_nom or n
+        v_prenom = v_prenom or p
 
-        v_nom = _val_at(r, "nom")
-        v_prenom = _val_at(r, "prenom")
+    # Date
+    v_date = _coerce_date(
+        _val_at(r, "date") or (ws[f"{COL_DATE}{r}"].value if COL_DATE else None)
+    )
 
-        if (not v_nom or not v_prenom) and COL_FULLNAME:
-            n, p = split_full_name(_val_at(r, "full_name") or (ws[f"{COL_FULLNAME}{r}"].value if COL_FULLNAME else None))
-            v_nom = v_nom or n
-            v_prenom = v_prenom or p
+    # Heures
+    h_norm = _hours_at(r, COL_HN)
+    hs25 = _hours_at(r, COL_HS25)
+    hs50 = _hours_at(r, COL_HS50)
+    hs100 = _hours_at(r, COL_HS100)
+    hfer = _hours_at(r, COL_HFER)
 
-        # Date
-        v_date = _coerce_date(_val_at(r, "date") or (ws[f"{COL_DATE}{r}"].value if COL_DATE else None))
+    hs_normales_agg = None
+    parts = [
+        x for x in (hs25, hs50, hs100)
+        if isinstance(x, (int, float)) and math.isfinite(x)
+    ]
+    if parts:
+        hs_normales_agg = round(sum(parts), 2)
 
-        # Heures
-        h_norm = _hours_at(r, COL_HN)
-        hs25 = _hours_at(r, COL_HS25)
-        hs50 = _hours_at(r, COL_HS50)
-        hs100 = _hours_at(r, COL_HS100)
-        hfer = _hours_at(r, COL_HFER)
-
-        hs_normales_agg = None
-        parts = [x for x in (hs25, hs50, hs100) if isinstance(x, (int, float))]
-        if parts:
-            hs_normales_agg = round(sum(parts), 2)
-
-        # Jours saisis (nb_jt) si dispo
-        nb_jt_val_raw = None
-        if COL_NBJT:
-            try:
-                nb_jt_val_raw = ws[f"{COL_NBJT}{r}"].value
-            except Exception:
-                nb_jt_val_raw = None
-        nb_jt_days = _parse_days(nb_jt_val_raw)
+    # Jours saisis (nb_jt) si dispo
+    nb_jt_val_raw = None
+    if COL_NBJT:
+        try:
+            nb_jt_val_raw = ws[f"{COL_NBJT}{r}"].value
+        except Exception:
+            nb_jt_val_raw = None
+    nb_jt_days = _parse_days(nb_jt_val_raw)
 
         # Demi-journée (absence)
         abs_raw = None
