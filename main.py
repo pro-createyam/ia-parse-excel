@@ -1102,7 +1102,7 @@ async def parse_excel_upload(
         hfer = _hours_at(r, COL_HFER)
 
         hs_normales_agg = None
--        parts = [x for x in (hs25, hs50, hs100) if isinstance(x, (int, float, float))]
+-        parts = [x for x in (hs25, hs50, hs100) if isinstance(x, (int, float))]
 +        parts = [x for x in (hs25, hs50, hs100) if isinstance(x, (int, float))]
         if parts:
             hs_normales_agg = round(sum(parts), 2)
