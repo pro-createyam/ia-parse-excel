@@ -1,3 +1,13 @@
+"""
+mapper.py
+----------
+Gestion des entêtes Excel, vocabulaire de synonymes,
+et détection fuzzy des colonnes.
+"""
+
+import re
+from typing import Dict, List, Tuple
+from rapidfuzz import fuzz
 
 # --- Helpers entêtes/feuilles -----------------------------------------------
 def _row_values(ws, row_index: int):
