@@ -3,8 +3,9 @@ from openpyxl import load_workbook
 from io import BytesIO
 import re
 import math
+from merge import merge_rows
 
-from fastapi import UploadFile, File, Form, HTTPException
+from fastapi import UploadFile, File, Form, HTTPException, Body
 
 from utils_app import _configure_logging, create_app
 from utils_data import _parse_rules, _parse_holidays, _coerce_date
@@ -611,4 +612,39 @@ async def timesheet_intake(
         "holiday_dates": list(holidays),
     }
 
+from typing import Any  # si pas déjà importé plus haut
+
+@app.post("/merge-intake")
+async def merge_intake(payload: Dict[str, Any] = Body(...)):
+    """
+    payload attend:
+    {
+      "template_roster": [ {...}, ... ],  # issus de /template-intake (roster)
+      "timesheet_rows":  [ {...}, ... ],  # issus de /timesheet-intake (preview_rows) ou /parse-excel-upload (rows)
+      "timesheet_period": "YYYY-MM",
+      "fuzzy_threshold_strict": 92,     # optionnel
+      "fuzzy_threshold_loose": 85,      # optionnel
+      "require_initial_match": true     # optionnel
+    }
+    """
+    template_roster: List[Dict[str, Any]] = payload.get("template_roster") or []
+    timesheet_rows:  List[Dict[str, Any]] = payload.get("timesheet_rows")  or []
+    period: Optional[str] = payload.get("timesheet_period")
+
+    strict = int(payload.get("fuzzy_threshold_strict", 92))
+    loose  = int(payload.get("fuzzy_threshold_loose", 85))
+    require_initials = bool(payload.get("require_initial_match", True))
+
+    if not isinstance(template_roster, list) or not isinstance(timesheet_rows, list):
+        raise HTTPException(status_code=400, detail="template_roster and timesheet_rows must be lists")
+
+    result = merge_rows(
+        template_roster=template_roster,
+        timesheet_rows=timesheet_rows,
+        timesheet_period=period,
+        strict=strict,
+        loose=loose,
+        require_initials=require_initials,
+    )
+    return result
 
