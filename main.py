@@ -1,30 +1,15 @@
-# main.py
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Any, Dict, Tuple
 from openpyxl import load_workbook
 from io import BytesIO
-from datetime import datetime, date, timedelta
-import json
 import re
 import logging
-import os
 import math
 
-from utils_app import _configure_logging, _get_cors_origins, create_app
-from utils_data import (
-    _parse_rules, _parse_holidays, _coerce_bool,
-    _excel_serial_to_date, _coerce_date
-)
-from converter import (
-    _parse_hours_to_decimal, _parse_days,
-    _hours_to_days, _days_to_hours
-)
-from mapper import (
-    _row_values, _count_nonempty, _is_numeric_like, _is_date_like_text, _normalize,
-    _header_score, _best_header_row, _headers_at, _extract_headers, _pick_best_sheet,
-    TARGET_SYNONYMS, _detect_columns
-)
+from utils_app import _configure_logging, create_app
+from utils_data import _parse_rules, _parse_holidays, _coerce_date
+from converter import _parse_hours_to_decimal, _parse_days, _hours_to_days, _days_to_hours
+from mapper import _normalize, _extract_headers, _pick_best_sheet, _detect_columns
+
 
 logger = _configure_logging()
 app = create_app()
