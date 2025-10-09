@@ -2,21 +2,17 @@ from typing import Optional, List, Any, Dict, Tuple
 from openpyxl import load_workbook
 from io import BytesIO
 import re
-import logging
 import math
+
+from fastapi import UploadFile, File, Form, HTTPException
 
 from utils_app import _configure_logging, create_app
 from utils_data import _parse_rules, _parse_holidays, _coerce_date
 from converter import _parse_hours_to_decimal, _parse_days, _hours_to_days, _days_to_hours
 from mapper import _normalize, _extract_headers, _pick_best_sheet, _detect_columns
 
-
 logger = _configure_logging()
 app = create_app()
-
-# ─────────────────────────── Utils
-_RE_NUMERIC_SERIAL = re.compile(r"^\d{1,5}(?:[.,]\d+)?$")  # ex: "45000", "45000.0", "45000,5"
-
 
 # --- Upload guard ------------------------------------------------------------
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
