@@ -79,7 +79,7 @@ def fuzzy_match_name(
     loose: int,
     require_initials: bool,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[int], List[Tuple[str, int]]]:
-    # Pré-filtrage: ignorer les noms ridiculement courts côté TS
+    # Pré-filtrage: ignorer les noms trop courts côté TS
     ts_nom = _norm(ts_row.get("nom"))
     ts_pre = _norm(ts_row.get("prenom"))
     if len(ts_nom) < 2 or len(ts_pre) < 2:
@@ -93,13 +93,15 @@ def fuzzy_match_name(
     choices = [k for (k, _) in name_bank]
     top = process.extract(q, choices, scorer=fuzz.WRatio, limit=5)
 
-    # Appliquer bonus/contraintes au score
+    # Appliquer bonus/contraintes
     candidates: List[Tuple[Dict[str, Any], int]] = []
     ts_service = _norm(ts_row.get("service"))
     ts_matcli  = _norm(ts_row.get("matricule_client"))
 
     for target, base_score, _ in top:
+        # récupérer la ligne ref associée à ce target
         ref = next(r for (k, r) in name_bank if k == target)
+
         # Initiales obligatoires ?
         if require_initials and not _initials_ok(ts_row.get("nom",""), ts_row.get("prenom",""), ref.get("nom",""), ref.get("prenom","")):
             continue
@@ -116,42 +118,38 @@ def fuzzy_match_name(
         if ts_matcli and ref_matcli and ts_matcli == ref_matcli:
             score += 2
 
-        # Clamp 0..100
         score = max(0, min(100, score))
         candidates.append((ref, score))
 
     if not candidates:
-        # renvoyer quelques pistes brutes (pour debug UI) si besoin
         return None, None, [(t, s) for (t, s, _) in top]
 
-    # Trier par score desc
     candidates.sort(key=lambda x: x[1], reverse=True)
     best_ref, best_score = candidates[0]
 
     if best_score >= strict:
-        # si un autre est très proche → ambigu
         if len(candidates) > 1 and (candidates[1][1] + 2) >= best_score:
-            return None, None, [( _name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
+            return None, None, [(_name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
         return best_ref, best_score, []
 
     if best_score >= loose:
-        # on accepte si la marge avec #2 est suffisante, sinon ambigu
         if len(candidates) > 1 and (candidates[1][1] + 3) >= best_score:
-            return None, None, [( _name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
+            return None, None, [(_name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
         return best_ref, best_score, []
 
-    return None, None, [( _name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
+    return None, None, [(_name_key(c[0].get("nom"), c[0].get("prenom")), c[1]) for c in candidates[:3]]
 
 # ------------------------- Fusion -------------------------
 KEEP_FROM_REF = [
-    "matricule", "matricule_client", "nom", "prenom", "cin",
-    "num_contrat", "num_avenant", "date_debut", "date_fin", "service",
-    "nombre"  # si tu veux le conserver
+    "matricule", "matricule_salarie", "matricule_client", "nom", "prenom", "cin",
+    "num_contrat", "num_avenant", "date_debut", "date_fin", "service", "nombre"
 ]
 
 TAKE_FROM_TS = [
     "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
-    "heures_norm_dec","rappel_hrs_norm_140",
+    # on accepte les deux noms possibles pour les heures normales
+    "heures_norm_dec","heures_travaillees_decimal",
+    "rappel_hrs_norm_140",
     "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
     "ind_panier_771","ind_transport_777","ind_deplacement_780",
     "heures_jour_ferie_chome_090","observations","fin_mission"
@@ -160,6 +158,9 @@ TAKE_FROM_TS = [
 def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -> Dict[str, Any]:
     out = {k: ref.get(k) for k in KEEP_FROM_REF}
     out.update({k: ts.get(k) for k in TAKE_FROM_TS})
+    # normaliser le champ heures_norm_dec si dispo seulement sous l’autre nom
+    if out.get("heures_norm_dec") is None and ts.get("heures_travaillees_decimal") is not None:
+        out["heures_norm_dec"] = ts.get("heures_travaillees_decimal")
     out["match_mode"] = mode
     out["match_score"] = score
     return out
@@ -186,7 +187,7 @@ def merge_rows(
             matched_ids.add(id(ref))
             continue
 
-        # 2) Fuzzy Nom+Prénom (avec bonus/contraintes)
+        # 2) Fuzzy Nom+Prénom
         ref, score, amb = fuzzy_match_name(ts, idx["name_bank"], strict, loose, require_initials)
         if ref and score is not None:
             matched.append(_merge_one(ref, ts, "name_fuzzy", score))
