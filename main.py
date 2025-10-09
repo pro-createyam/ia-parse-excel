@@ -612,7 +612,6 @@ async def timesheet_intake(
         "holiday_dates": list(holidays),
     }
 
-from typing import Any  # si pas déjà importé plus haut
 
 @app.post("/merge-intake")
 async def merge_intake(payload: Dict[str, Any] = Body(...)):
