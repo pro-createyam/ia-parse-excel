@@ -142,14 +142,13 @@ def fuzzy_match_name(
 # ------------------------- Fusion -------------------------
 KEEP_FROM_REF = [
     "matricule", "matricule_salarie", "matricule_client", "nom", "prenom", "cin",
-    "num_contrat", "num_avenant", "date_debut", "date_fin", "service", "nombre"
+    "num_contrat", "num_avenant", "date_debut", "date_fin", "service",
+    "nombre"
 ]
 
 TAKE_FROM_TS = [
     "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
-    # on accepte les deux noms possibles pour les heures normales
-    "heures_norm_dec","heures_travaillees_decimal",
-    "rappel_hrs_norm_140",
+    "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
     "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
     "ind_panier_771","ind_transport_777","ind_deplacement_780",
     "heures_jour_ferie_chome_090","observations","fin_mission"
@@ -158,12 +157,10 @@ TAKE_FROM_TS = [
 def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -> Dict[str, Any]:
     out = {k: ref.get(k) for k in KEEP_FROM_REF}
     out.update({k: ts.get(k) for k in TAKE_FROM_TS})
-    # normaliser le champ heures_norm_dec si dispo seulement sous l’autre nom
-    if out.get("heures_norm_dec") is None and ts.get("heures_travaillees_decimal") is not None:
-        out["heures_norm_dec"] = ts.get("heures_travaillees_decimal")
     out["match_mode"] = mode
-    out["match_score"] = score
+    out["match_score"] = int(round(float(score)))  # <— arrondi entier
     return out
+
 
 def merge_rows(
     template_roster: List[Dict[str, Any]],
