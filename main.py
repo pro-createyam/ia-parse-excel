@@ -4,6 +4,8 @@ from io import BytesIO
 import re
 import math
 from merge import merge_rows
+from openpyxl import Workbook
+from fastapi.responses import StreamingResponse
 
 from fastapi import UploadFile, File, Form, HTTPException, Body
 
@@ -646,4 +648,146 @@ async def merge_intake(payload: Dict[str, Any] = Body(...)):
         require_initials=require_initials,
     )
     return result
+# ─────────────────────────── Export Excel (à partir de /merge-intake) ───────────────────────────
+
+def _write_sheet(ws, rows, headers):
+    """Ecrit un tableau dict[] -> Excel selon un ordre de colonnes 'headers'."""
+    # En-têtes
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    # Lignes
+    for r_idx, row in enumerate(rows or [], start=2):
+        if isinstance(row, dict):
+            for c, h in enumerate(headers, start=1):
+                ws.cell(row=r_idx, column=c, value=row.get(h))
+        else:
+            ws.cell(row=r_idx, column=1, value=str(row))
+
+def _infer_headers_from_rows(rows, preferred_order):
+    """Retourne une liste de colonnes à écrire : priorise preferred_order puis complète avec colonnes détectées."""
+    seen = set()
+    out = []
+    # d'abord l'ordre préféré
+    for h in preferred_order:
+        if rows and any(isinstance(r, dict) and (h in r) for r in rows):
+            out.append(h); seen.add(h)
+    # puis toute autre colonne présente
+    if rows:
+        for r in rows:
+            if isinstance(r, dict):
+                for k in r.keys():
+                    if k not in seen:
+                        out.append(k); seen.add(k)
+    return out
+
+def _flatten_ambiguous(ambiguous):
+    """Aplati la liste des matchs ambigus pour être lisible en Excel."""
+    out = []
+    for a in ambiguous or []:
+        ts = a.get("timesheet") or {}
+        for cand in a.get("candidates", []):
+            # cand peut être ("nom|prenom", score) ou dict
+            if isinstance(cand, (list, tuple)) and len(cand) == 2:
+                cand_key, cand_score = cand
+            elif isinstance(cand, dict):
+                cand_key, cand_score = cand.get("key"), cand.get("score")
+            else:
+                cand_key, cand_score = str(cand), None
+            out.append({
+                "ts_nom": ts.get("nom"),
+                "ts_prenom": ts.get("prenom"),
+                "ts_matricule_client": ts.get("matricule_client"),
+                "ts_service": ts.get("service"),
+                "candidate": cand_key,
+                "score": cand_score,
+            })
+    return out
+
+@app.post("/merge-export")
+async def merge_export(merge_result: Dict[str, Any] = Body(...)):
+    """
+    Entrée attendue: la réponse JSON de /merge-intake :
+    {
+      "matched_rows": [...],
+      "missing_in_client": [...],
+      "missing_in_roster": [...],
+      "ambiguous": [...],
+      "stats": {...}
+    }
+    Sortie: fichier Excel multi-onglets prêt à télécharger.
+    """
+    matched = merge_result.get("matched_rows") or []
+    miss_client = merge_result.get("missing_in_client") or []
+    miss_roster = merge_result.get("missing_in_roster") or []
+    ambiguous = merge_result.get("ambiguous") or []
+    stats = merge_result.get("stats") or {}
+
+    # Ordre préféré pour l’onglet Matched (format paie)
+    preferred_matched = [
+        "matricule","matricule_salarie","matricule_client","nom","prenom","cin",
+        "num_contrat","num_avenant","date_debut","date_fin","service","nombre",
+        "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
+        "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
+        "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
+        "ind_panier_771","ind_transport_777","ind_deplacement_780",
+        "heures_jour_ferie_chome_090","observations","fin_mission",
+        "match_mode","match_score"
+    ]
+    headers_matched = _infer_headers_from_rows(matched, preferred_matched)
+
+    # Colonnes de contrôle (références roster non trouvées côté timesheet)
+    preferred_ref = [
+        "matricule","matricule_salarie","matricule_client","nom","prenom","cin",
+        "num_contrat","num_avenant","date_debut","date_fin","service","nombre"
+    ]
+    headers_ref = _infer_headers_from_rows(miss_client, preferred_ref)
+
+    # Colonnes pour les lignes du timesheet non matchées (à corriger côté roster)
+    preferred_ts = [
+        "matricule","matricule_client","nom","prenom","cin","service",
+        "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
+        "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
+        "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
+        "ind_panier_771","ind_transport_777","ind_deplacement_780",
+        "heures_jour_ferie_chome_090","observations","fin_mission"
+    ]
+    headers_ts = _infer_headers_from_rows(miss_roster, preferred_ts)
+
+    # Ambiguïtés aplaties
+    amb_rows = _flatten_ambiguous(ambiguous)
+    headers_amb = _infer_headers_from_rows(amb_rows, [
+        "ts_nom","ts_prenom","ts_matricule_client","ts_service","candidate","score"
+    ])
+
+    # Création du classeur
+    wb = Workbook()
+
+    ws1 = wb.active
+    ws1.title = "Matched"
+    _write_sheet(ws1, matched, headers_matched)
+
+    ws2 = wb.create_sheet("Missing in Client")
+    _write_sheet(ws2, miss_client, headers_ref)
+
+    ws3 = wb.create_sheet("Missing in Roster")
+    _write_sheet(ws3, miss_roster, headers_ts)
+
+    ws4 = wb.create_sheet("Ambiguous")
+    _write_sheet(ws4, amb_rows, headers_amb)
+
+    # Onglet Stats / Audit (optionnel)
+    ws5 = wb.create_sheet("Stats")
+    _write_sheet(ws5, [stats], list(stats.keys()) if stats else ["info"])
+
+    # Sauvegarde et réponse binaire
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    logger.info("merge-export | xlsx generated | matched=%s missing_client=%s missing_roster=%s ambiguous=%s",
+                len(matched), len(miss_client), len(miss_roster), len(ambiguous))
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="merge_result.xlsx"'}
+    )
 
