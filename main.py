@@ -6,6 +6,7 @@ import math
 from merge import merge_rows
 from openpyxl import Workbook
 from fastapi.responses import StreamingResponse
+from openpyxl.styles import Font, Alignment
 
 from fastapi import UploadFile, File, Form, HTTPException, Body
 
@@ -651,10 +652,13 @@ async def merge_intake(payload: Dict[str, Any] = Body(...)):
 # ─────────────────────────── Export Excel (à partir de /merge-intake) ───────────────────────────
 
 def _write_sheet(ws, rows, headers):
-    """Ecrit un tableau dict[] -> Excel selon un ordre de colonnes 'headers'."""
-    # En-têtes
+    """Ecrit un tableau dict[] -> Excel selon un ordre de colonnes 'headers' + formatage."""
+    # En-têtes (gras + centrés)
     for c, h in enumerate(headers, start=1):
-        ws.cell(row=1, column=c, value=h)
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+
     # Lignes
     for r_idx, row in enumerate(rows or [], start=2):
         if isinstance(row, dict):
@@ -662,6 +666,34 @@ def _write_sheet(ws, rows, headers):
                 ws.cell(row=r_idx, column=c, value=row.get(h))
         else:
             ws.cell(row=r_idx, column=1, value=str(row))
+
+    # Geler l’en-tête
+    ws.freeze_panes = "A2"
+
+    # Largeur auto simple (mesurée sur le contenu actuel)
+    for col_cells in ws.columns:
+        max_len = 0
+        col_letter = col_cells[0].column_letter
+        for cell in col_cells:
+            try:
+                val = "" if cell.value is None else str(cell.value)
+                if len(val) > max_len:
+                    max_len = len(val)
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 50)
+
+    # Formatage décimal pour colonnes heures (si présentes)
+    hour_cols = {
+        "heures_norm_dec", "heures_travaillees_decimal", "rappel_hrs_norm_140",
+        "hs_25_dec", "hs_50_dec", "hs_100_dec", "hs_feries_dec",
+        "heures_jour_ferie_chome_090"
+    }
+    for c, h in enumerate(headers, start=1):
+        if h in hour_cols:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(row=r, column=c).number_format = "0.00"
+
 
 def _infer_headers_from_rows(rows, preferred_order):
     """Retourne une liste de colonnes à écrire : priorise preferred_order puis complète avec colonnes détectées."""
