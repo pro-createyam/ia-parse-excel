@@ -55,11 +55,16 @@ def _active_in_period(ref_row: Dict[str, Any], d0: Optional[date], d1: Optional[
         return False
     return True
 
+def _roster_key(r: Dict[str, Any]) -> Tuple[str, str, str]:
+    # clé stable et déterministe pour identifier une ligne roster
+    return (_norm(r.get("nom")), _norm(r.get("prenom")), _norm(r.get("cin")))
+
 # ------------------------- Index roster (ref) -------------------------
 def build_roster_index(template_roster: List[Dict[str, Any]], period: Optional[str]) -> Dict[str, Any]:
     d0, d1 = _period_bounds(period)
-    by_cin = {}
+    by_cin: Dict[str, Dict[str, Any]] = {}
     name_bank: List[Tuple[str, Dict[str, Any]]] = []
+    name_lookup: Dict[str, Dict[str, Any]] = {}
 
     for r in template_roster:
         if not _active_in_period(r, d0, d1):
@@ -67,9 +72,11 @@ def build_roster_index(template_roster: List[Dict[str, Any]], period: Optional[s
         cin = _norm(r.get("cin"))
         if cin:
             by_cin[cin] = r
-        name_bank.append((_name_key(r.get("nom"), r.get("prenom")), r))
+        key = _name_key(r.get("nom"), r.get("prenom"))
+        name_bank.append((key, r))
+        name_lookup[key] = r
 
-    return {"by_cin": by_cin, "name_bank": name_bank}
+    return {"by_cin": by_cin, "name_bank": name_bank, "name_lookup": name_lookup}
 
 # ------------------------- Fuzzy matching Nom+Prénom -------------------------
 def fuzzy_match_name(
@@ -78,6 +85,8 @@ def fuzzy_match_name(
     strict: int,
     loose: int,
     require_initials: bool,
+    *,
+    name_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[int], List[Tuple[str, int]]]:
     # Pré-filtrage: ignorer les noms trop courts côté TS
     ts_nom = _norm(ts_row.get("nom"))
@@ -99,8 +108,7 @@ def fuzzy_match_name(
     ts_matcli  = _norm(ts_row.get("matricule_client"))
 
     for target, base_score, _ in top:
-        # récupérer la ligne ref associée à ce target
-        ref = next(r for (k, r) in name_bank if k == target)
+        ref = name_lookup.get(target) if name_lookup else next(r for (k, r) in name_bank if k == target)
 
         # Initiales obligatoires ?
         if require_initials and not _initials_ok(ts_row.get("nom",""), ts_row.get("prenom",""), ref.get("nom",""), ref.get("prenom","")):
@@ -157,10 +165,14 @@ TAKE_FROM_TS = [
 def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -> Dict[str, Any]:
     out = {k: ref.get(k) for k in KEEP_FROM_REF}
     out.update({k: ts.get(k) for k in TAKE_FROM_TS})
-    out["match_mode"] = mode
-    out["match_score"] = int(round(float(score)))  # <— arrondi entier
-    return out
 
+    # Garantit heures_norm_dec même si seul 'heures_travaillees_decimal' est fourni
+    if out.get("heures_norm_dec") is None and ts.get("heures_travaillees_decimal") is not None:
+        out["heures_norm_dec"] = ts.get("heures_travaillees_decimal")
+
+    out["match_mode"] = mode
+    out["match_score"] = int(round(float(score)))  # score entier lisible
+    return out
 
 def merge_rows(
     template_roster: List[Dict[str, Any]],
@@ -172,30 +184,47 @@ def merge_rows(
 ) -> Dict[str, Any]:
 
     idx = build_roster_index(template_roster, timesheet_period)
-    matched, missing_in_roster, ambiguous = [], [], []
-    matched_ids = set()
+    matched: List[Dict[str, Any]] = []
+    missing_in_roster: List[Dict[str, Any]] = []
+    ambiguous: List[Dict[str, Any]] = []
+
+    matched_keys = set()           # clé logique pour référencer les refs matchées
+    dup_check: Dict[Tuple[str,str,str], int] = {}  # contrôle doublons côté ref
 
     for ts in timesheet_rows:
         # 1) CIN exact
         cin = _norm(ts.get("cin"))
         if cin and cin in idx["by_cin"]:
             ref = idx["by_cin"][cin]
-            matched.append(_merge_one(ref, ts, "cin", 100))
-            matched_ids.add(id(ref))
+            merged = _merge_one(ref, ts, "cin", 100)
+            matched.append(merged)
+
+            key = _roster_key(ref)
+            matched_keys.add(key)
+            dup_check[key] = dup_check.get(key, 0) + 1
             continue
 
         # 2) Fuzzy Nom+Prénom
-        ref, score, amb = fuzzy_match_name(ts, idx["name_bank"], strict, loose, require_initials)
+        ref, score, amb = fuzzy_match_name(
+            ts, idx["name_bank"], strict, loose, require_initials, name_lookup=idx.get("name_lookup")
+        )
         if ref and score is not None:
-            matched.append(_merge_one(ref, ts, "name_fuzzy", score))
-            matched_ids.add(id(ref))
+            merged = _merge_one(ref, ts, "name_fuzzy", score)
+            matched.append(merged)
+
+            key = _roster_key(ref)
+            matched_keys.add(key)
+            dup_check[key] = dup_check.get(key, 0) + 1
         elif amb:
             ambiguous.append({"timesheet": ts, "candidates": amb})
         else:
             missing_in_roster.append(ts)
 
     # 3) Référence non trouvée côté client (actifs)
-    missing_in_client = [r for (_, r) in idx["name_bank"] if id(r) not in matched_ids]
+    missing_in_client = [r for (_, r) in idx["name_bank"] if _roster_key(r) not in matched_keys]
+
+    # 4) Doublons sur la même référence (contrôle qualité)
+    duplicates = [k for (k, n) in dup_check.items() if n > 1]
 
     return {
         "matched_rows": matched,
@@ -209,5 +238,8 @@ def merge_rows(
             "missing_in_client": len(missing_in_client),
             "missing_in_roster": len(missing_in_roster),
             "ambiguous": len(ambiguous),
-        }
+            "duplicates_ref_count": len(duplicates),
+        },
+        "duplicates_ref_keys": duplicates  # utile pour debug/QA
     }
+
