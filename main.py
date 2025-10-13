@@ -7,8 +7,8 @@ from merge import merge_rows
 from openpyxl import Workbook
 from fastapi.responses import StreamingResponse
 from openpyxl.styles import Font, Alignment
-
-from fastapi import UploadFile, File, Form, HTTPException, Body
+import json
+from fastapi import UploadFile, File, Form, HTTPException, Body, Request
 
 from utils_app import _configure_logging, create_app
 from utils_data import _parse_rules, _parse_holidays, _coerce_date
@@ -617,38 +617,78 @@ async def timesheet_intake(
 
 
 @app.post("/merge-intake")
-async def merge_intake(payload: Dict[str, Any] = Body(...)):
+async def merge_intake(request: Request):
     """
-    payload attend:
+    Attend un JSON de la forme :
     {
-      "template_roster": [ {...}, ... ],  # issus de /template-intake (roster)
-      "timesheet_rows":  [ {...}, ... ],  # issus de /timesheet-intake (preview_rows) ou /parse-excel-upload (rows)
+      "template_roster": [ {...}, ... ],
+      "timesheet_rows":  [ {...}, ... ],
       "timesheet_period": "YYYY-MM",
-      "fuzzy_threshold_strict": 92,     # optionnel
-      "fuzzy_threshold_loose": 85,      # optionnel
-      "require_initial_match": true     # optionnel
+      "fuzzy_threshold_strict": 92,      # optionnel
+      "fuzzy_threshold_loose": 85,       # optionnel
+      "require_initial_match": true      # optionnel
     }
     """
-    template_roster: List[Dict[str, Any]] = payload.get("template_roster") or []
-    timesheet_rows:  List[Dict[str, Any]] = payload.get("timesheet_rows")  or []
-    period: Optional[str] = payload.get("timesheet_period")
+    # 1) Lire le body brut et le parser nous-mêmes (pour éviter le 422 FastAPI)
+    try:
+        raw = await request.body()
+        # tolérance encodage
+        text = raw.decode("utf-8", errors="replace").strip()
+        if not text:
+            raise ValueError("empty body")
+        payload = json.loads(text)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
 
-    strict = int(payload.get("fuzzy_threshold_strict", 92))
-    loose  = int(payload.get("fuzzy_threshold_loose", 85))
-    require_initials = bool(payload.get("require_initial_match", True))
+    # 2) Récupérer / normaliser les champs attendus
+    def _coerce_list(v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
 
+    template_roster = _coerce_list(payload.get("template_roster"))
+    timesheet_rows  = _coerce_list(payload.get("timesheet_rows"))
+    period         = payload.get("timesheet_period")
+
+    # seuils / options avec défauts robustes
+    def _to_int(v, d): 
+        try: return int(v)
+        except: return d
+    def _to_bool(v, d):
+        if isinstance(v, bool): return v
+        if isinstance(v, str): return v.strip().lower() in {"1","true","yes","y"}
+        return d
+
+    strict  = _to_int(payload.get("fuzzy_threshold_strict"), 92)
+    loose   = _to_int(payload.get("fuzzy_threshold_loose"), 85)
+    require = _to_bool(payload.get("require_initial_match"), True)
+
+    # garde-fous types
     if not isinstance(template_roster, list) or not isinstance(timesheet_rows, list):
         raise HTTPException(status_code=400, detail="template_roster and timesheet_rows must be lists")
 
+    # 3) Appel du merge
     result = merge_rows(
         template_roster=template_roster,
         timesheet_rows=timesheet_rows,
         timesheet_period=period,
         strict=strict,
         loose=loose,
-        require_initials=require_initials,
+        require_initials=require,
     )
     return result
+
 # ─────────────────────────── Export Excel (à partir de /merge-intake) ───────────────────────────
 
 def _write_sheet(ws, rows, headers):
