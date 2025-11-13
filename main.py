@@ -691,175 +691,79 @@ async def merge_intake(request: Request):
 
 # ─────────────────────────── Export Excel (à partir de /merge-intake) ───────────────────────────
 
-def _write_sheet(ws, rows, headers):
-    """Ecrit un tableau dict[] -> Excel selon un ordre de colonnes 'headers' + formatage."""
-    # En-têtes (gras + centrés)
-    for c, h in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=c, value=h)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-
-    # Lignes
-    for r_idx, row in enumerate(rows or [], start=2):
-        if isinstance(row, dict):
-            for c, h in enumerate(headers, start=1):
-                ws.cell(row=r_idx, column=c, value=row.get(h))
-        else:
-            ws.cell(row=r_idx, column=1, value=str(row))
-
-    # Geler l’en-tête
-    ws.freeze_panes = "A2"
-
-    # Largeur auto simple (mesurée sur le contenu actuel)
-    for col_cells in ws.columns:
-        max_len = 0
-        col_letter = col_cells[0].column_letter
-        for cell in col_cells:
-            try:
-                val = "" if cell.value is None else str(cell.value)
-                if len(val) > max_len:
-                    max_len = len(val)
-            except Exception:
-                pass
-        ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 50)
-
-    # Formatage décimal pour colonnes heures (si présentes)
-    hour_cols = {
-        "heures_norm_dec", "heures_travaillees_decimal", "rappel_hrs_norm_140",
-        "hs_25_dec", "hs_50_dec", "hs_100_dec", "hs_feries_dec",
-        "heures_jour_ferie_chome_090"
-    }
-    for c, h in enumerate(headers, start=1):
-        if h in hour_cols:
-            for r in range(2, ws.max_row + 1):
-                ws.cell(row=r, column=c).number_format = "0.00"
-
-
-def _infer_headers_from_rows(rows, preferred_order):
-    """Retourne une liste de colonnes à écrire : priorise preferred_order puis complète avec colonnes détectées."""
-    seen = set()
-    out = []
-    # d'abord l'ordre préféré
-    for h in preferred_order:
-        if rows and any(isinstance(r, dict) and (h in r) for r in rows):
-            out.append(h); seen.add(h)
-    # puis toute autre colonne présente
-    if rows:
-        for r in rows:
-            if isinstance(r, dict):
-                for k in r.keys():
-                    if k not in seen:
-                        out.append(k); seen.add(k)
-    return out
-
-def _flatten_ambiguous(ambiguous):
-    """Aplati la liste des matchs ambigus pour être lisible en Excel."""
-    out = []
-    for a in ambiguous or []:
-        ts = a.get("timesheet") or {}
-        for cand in a.get("candidates", []):
-            # cand peut être ("nom|prenom", score) ou dict
-            if isinstance(cand, (list, tuple)) and len(cand) == 2:
-                cand_key, cand_score = cand
-            elif isinstance(cand, dict):
-                cand_key, cand_score = cand.get("key"), cand.get("score")
-            else:
-                cand_key, cand_score = str(cand), None
-            out.append({
-                "ts_nom": ts.get("nom"),
-                "ts_prenom": ts.get("prenom"),
-                "ts_matricule_client": ts.get("matricule_client"),
-                "ts_service": ts.get("service"),
-                "candidate": cand_key,
-                "score": cand_score,
-            })
-    return out
-
 @app.post("/merge-export")
 async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     """
-    Entrée attendue: la réponse JSON de /merge-intake :
+    Reçoit le JSON complet renvoyé par /merge-intake :
     {
       "matched_rows": [...],
       "missing_in_client": [...],
       "missing_in_roster": [...],
       "ambiguous": [...],
-      "stats": {...}
+      "stats": {...},
+      "duplicates_ref_keys": [...]
     }
-    Sortie: fichier Excel multi-onglets prêt à télécharger.
+    et retourne un fichier Excel multi-onglets.
     """
-    matched = merge_result.get("matched_rows") or []
-    miss_client = merge_result.get("missing_in_client") or []
-    miss_roster = merge_result.get("missing_in_roster") or []
-    ambiguous = merge_result.get("ambiguous") or []
-    stats = merge_result.get("stats") or {}
-
-    # Ordre préféré pour l’onglet Matched (format paie)
-    preferred_matched = [
-        "matricule","matricule_salarie","matricule_client","nom","prenom","cin",
-        "num_contrat","num_avenant","date_debut","date_fin","service","nombre",
-        "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
-        "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
-        "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
-        "ind_panier_771","ind_transport_777","ind_deplacement_780",
-        "heures_jour_ferie_chome_090","observations","fin_mission",
-        "match_mode","match_score"
-    ]
-    headers_matched = _infer_headers_from_rows(matched, preferred_matched)
-
-    # Colonnes de contrôle (références roster non trouvées côté timesheet)
-    preferred_ref = [
-        "matricule","matricule_salarie","matricule_client","nom","prenom","cin",
-        "num_contrat","num_avenant","date_debut","date_fin","service","nombre"
-    ]
-    headers_ref = _infer_headers_from_rows(miss_client, preferred_ref)
-
-    # Colonnes pour les lignes du timesheet non matchées (à corriger côté roster)
-    preferred_ts = [
-        "matricule","matricule_client","nom","prenom","cin","service",
-        "nb_jt","nb_ji","nb_cp_280","nb_sans_solde","nb_jf","tx_sal",
-        "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
-        "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
-        "ind_panier_771","ind_transport_777","ind_deplacement_780",
-        "heures_jour_ferie_chome_090","observations","fin_mission"
-    ]
-    headers_ts = _infer_headers_from_rows(miss_roster, preferred_ts)
-
-    # Ambiguïtés aplaties
-    amb_rows = _flatten_ambiguous(ambiguous)
-    headers_amb = _infer_headers_from_rows(amb_rows, [
-        "ts_nom","ts_prenom","ts_matricule_client","ts_service","candidate","score"
-    ])
-
-    # Création du classeur
     wb = Workbook()
+    # On enlève la feuille par défaut créée par openpyxl
+    default_ws = wb.active
+    wb.remove(default_ws)
 
-    ws1 = wb.active
-    ws1.title = "Matched"
-    _write_sheet(ws1, matched, headers_matched)
+    # (nom de l’onglet, clé dans le JSON)
+    sections = [
+        ("Matched", "matched_rows"),
+        ("Missing in Client", "missing_in_client"),
+        ("Missing in Roster", "missing_in_roster"),
+        ("Ambiguous", "ambiguous"),
+    ]
 
-    ws2 = wb.create_sheet("Missing in Client")
-    _write_sheet(ws2, miss_client, headers_ref)
+    for sheet_name, key in sections:
+        ws = wb.create_sheet(title=sheet_name)
+        data = merge_result.get(key) or []
 
-    ws3 = wb.create_sheet("Missing in Roster")
-    _write_sheet(ws3, miss_roster, headers_ts)
+        # On ne fait quelque chose que si on a une liste non vide
+        if not isinstance(data, list) or not data:
+            continue
 
-    ws4 = wb.create_sheet("Ambiguous")
-    _write_sheet(ws4, amb_rows, headers_amb)
+        # Récupère la liste de toutes les clés rencontrées dans cette section
+        headers = sorted({
+            k
+            for row in data
+            if isinstance(row, dict)
+            for k in row.keys()
+        })
 
-    # Onglet Stats / Audit (optionnel)
-    ws5 = wb.create_sheet("Stats")
-    _write_sheet(ws5, [stats], list(stats.keys()) if stats else ["info"])
+        if not headers:
+            continue
 
-    # Sauvegarde et réponse binaire
+        # Ligne d’en-tête
+        ws.append(headers)
+
+        # Lignes de données
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            ws.append([row.get(h, "") for h in headers])
+
+    # Onglet Stats
+    ws_stats = wb.create_sheet(title="Stats")
+    stats = merge_result.get("stats") or {}
+    if isinstance(stats, dict) and stats:
+        ws_stats.append(["key", "value"])
+        for k, v in stats.items():
+            ws_stats.append([str(k), str(v)])
+
+    # Génère le fichier en mémoire
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    logger.info("merge-export | xlsx generated | matched=%s missing_client=%s missing_roster=%s ambiguous=%s",
-                len(matched), len(miss_client), len(miss_roster), len(ambiguous))
+
+    filename = "merge_export.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="merge_result.xlsx"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
     )
-
