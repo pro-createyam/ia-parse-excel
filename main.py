@@ -694,7 +694,7 @@ async def merge_intake(request: Request):
 @app.post("/merge-export")
 async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     """
-    Reçoit le JSON complet renvoyé par /merge-intake :
+    Reçoit normalement le JSON complet renvoyé par /merge-intake :
     {
       "matched_rows": [...],
       "missing_in_client": [...],
@@ -703,8 +703,46 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
       "stats": {...},
       "duplicates_ref_keys": [...]
     }
-    et retourne un fichier Excel multi-onglets.
+
+    Mais si le front l'envoie imbriqué (ex: { "merge": { ... } }),
+    on essaie de le "déballer".
     """
+    # Log pour voir ce qu'on reçoit (si tu regardes les logs Render)
+    logger.info("merge-export | raw_keys=%s", list(merge_result.keys()))
+
+    expected_keys = {
+        "matched_rows",
+        "missing_in_client",
+        "missing_in_roster",
+        "ambiguous",
+        "stats",
+    }
+
+    # Si aucune des clés attendues n'est présente à la racine,
+    # on essaie de déballer un niveau (ex: {"merge": {...}}).
+    if not any(k in merge_result for k in expected_keys):
+        if len(merge_result) == 1:
+            inner = next(iter(merge_result.values()))
+            # Cas: {"merge": {...}}
+            if isinstance(inner, dict):
+                logger.info(
+                    "merge-export | unwrapped inner dict, keys=%s",
+                    list(inner.keys())
+                )
+                merge_result = inner
+            # Cas: {"merge": "{...json...}"}
+            elif isinstance(inner, str):
+                try:
+                    parsed = json.loads(inner)
+                    if isinstance(parsed, dict):
+                        logger.info(
+                            "merge-export | unwrapped inner JSON string, keys=%s",
+                            list(parsed.keys())
+                        )
+                        merge_result = parsed
+                except Exception as e:
+                    logger.warning("merge-export | failed to parse inner JSON string: %s", e)
+
     wb = Workbook()
     # On enlève la feuille par défaut créée par openpyxl
     default_ws = wb.active
