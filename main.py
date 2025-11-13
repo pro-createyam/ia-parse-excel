@@ -707,8 +707,14 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     Mais si le front l'envoie imbriqué (ex: { "merge": { ... } }),
     on essaie de le "déballer".
     """
-    # Log pour voir ce qu'on reçoit (si tu regardes les logs Render)
-    logger.info("merge-export | raw_keys=%s", list(merge_result.keys()))
+    if merge_result is None:
+        merge_result = {}
+
+    # Log minimal
+    try:
+        logger.info("merge-export | raw_keys=%s", list(merge_result.keys()))
+    except Exception:
+        pass
 
     expected_keys = {
         "matched_rows",
@@ -743,22 +749,28 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
                 except Exception as e:
                     logger.warning("merge-export | failed to parse inner JSON string: %s", e)
 
+    # On récupère les sections proprement
+    matched = merge_result.get("matched_rows") or []
+    miss_client = merge_result.get("missing_in_client") or []
+    miss_roster = merge_result.get("missing_in_roster") or []
+    ambiguous = merge_result.get("ambiguous") or []
+    stats = merge_result.get("stats") or {}
+
     wb = Workbook()
     # On enlève la feuille par défaut créée par openpyxl
     default_ws = wb.active
     wb.remove(default_ws)
 
-    # (nom de l’onglet, clé dans le JSON)
+    # (nom de l’onglet, données)
     sections = [
-        ("Matched", "matched_rows"),
-        ("Missing in Client", "missing_in_client"),
-        ("Missing in Roster", "missing_in_roster"),
-        ("Ambiguous", "ambiguous"),
+        ("Matched", matched),
+        ("Missing in Client", miss_client),
+        ("Missing in Roster", miss_roster),
+        ("Ambiguous", ambiguous),
     ]
 
-    for sheet_name, key in sections:
+    for sheet_name, data in sections:
         ws = wb.create_sheet(title=sheet_name)
-        data = merge_result.get(key) or []
 
         # On ne fait quelque chose que si on a une liste non vide
         if not isinstance(data, list) or not data:
@@ -784,11 +796,20 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
                 continue
             ws.append([row.get(h, "") for h in headers])
 
-    # Onglet Stats
+    # Onglet Stats – ici on écrit ce que le backend a VRAIMENT reçu
     ws_stats = wb.create_sheet(title="Stats")
-    stats = merge_result.get("stats") or {}
+
+    ws_stats.append(["metric", "value"])
+    ws_stats.append(["raw_keys", ", ".join(list(merge_result.keys()))])
+    ws_stats.append(["matched_rows_count", len(matched)])
+    ws_stats.append(["missing_in_client_count", len(miss_client)])
+    ws_stats.append(["missing_in_roster_count", len(miss_roster)])
+    ws_stats.append(["ambiguous_count", len(ambiguous)])
+
+    # Si stats est un dict, on l'ajoute aussi
     if isinstance(stats, dict) and stats:
-        ws_stats.append(["key", "value"])
+        ws_stats.append([])
+        ws_stats.append(["stats_key", "stats_value"])
         for k, v in stats.items():
             ws_stats.append([str(k), str(v)])
 
