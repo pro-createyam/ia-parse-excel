@@ -689,7 +689,7 @@ async def merge_intake(request: Request):
     )
     return result
 
-# ─────────────────────────── Export Excel (à partir de /merge-intake) ───────────────────────────
+# ─────────────────────────── Export Excel (à partir de /merge-intake ou de l'input brut) ───────────────────────────
 
 @app.post("/merge-export")
 async def merge_export(merge_result: Dict[str, Any] = Body(...)):
@@ -706,15 +706,17 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
          "duplicates_ref_keys": [...]
        }
 
-    2) Le front se trompe et renvoie encore l’INPUT de /merge-intake :
+    2) Le front envoie encore l'input brut :
        {
          "template_roster": [...],
          "timesheet_rows": [...],
          "timesheet_period": "YYYY-MM",
-         ...
+         "fuzzy_threshold_strict": 92,
+         "fuzzy_threshold_loose": 85,
+         "require_initial_match": true
        }
 
-    Dans le cas 2, on relance merge_rows() nous-mêmes pour reconstruire le résultat.
+    Dans le cas 2), on refait le merge ici avant de générer l'Excel.
     """
     if merge_result is None:
         merge_result = {}
@@ -724,6 +726,7 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     except Exception:
         pass
 
+    # Clés attendues quand on a déjà le résultat du merge
     expected_keys = {
         "matched_rows",
         "missing_in_client",
@@ -732,72 +735,78 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
         "stats",
     }
 
-    # ---------- CAS 2 : on a reçu l'INPUT de /merge-intake, pas le résultat ----------
+    # 1) Si aucune des clés "résultat" n'est là, mais qu'on a template_roster + timesheet_rows,
+    #    on refait le merge ici.
     if not any(k in merge_result for k in expected_keys) and \
-       ("template_roster" in merge_result and "timesheet_rows" in merge_result):
+       "template_roster" in merge_result and "timesheet_rows" in merge_result:
+        try:
+            logger.info("merge-export | detected raw input (template_roster + timesheet_rows) → recompute merge_rows")
 
-        logger.info("merge-export | detected intake-style payload, recomputing merge_rows")
-
-        def _coerce_list(v):
-            if v is None:
+            def _coerce_list(v):
+                if v is None:
+                    return []
+                if isinstance(v, list):
+                    return v
+                if isinstance(v, str):
+                    v = v.strip()
+                    if not v:
+                        return []
+                    try:
+                        parsed = json.loads(v)
+                        return parsed if isinstance(parsed, list) else []
+                    except Exception:
+                        return []
                 return []
-            if isinstance(v, list):
-                return v
-            if isinstance(v, str):
-                v = v.strip()
-                if not v:
-                    return []
-                try:
-                    parsed = json.loads(v)
-                    return parsed if isinstance(parsed, list) else []
-                except Exception:
-                    return []
-            return []
 
-        def _to_int(v, d):
-            try:
-                return int(v)
-            except Exception:
+            template_roster = _coerce_list(merge_result.get("template_roster"))
+            timesheet_rows  = _coerce_list(merge_result.get("timesheet_rows"))
+            period          = merge_result.get("timesheet_period")
+
+            def _to_int(v, d):
+                try:
+                    return int(v)
+                except Exception:
+                    return d
+
+            def _to_bool(v, d):
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, str):
+                    return v.strip().lower() in {"1", "true", "yes", "y"}
                 return d
 
-        def _to_bool(v, d):
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, str):
-                return v.strip().lower() in {"1", "true", "yes", "y"}
-            return d
+            strict  = _to_int(merge_result.get("fuzzy_threshold_strict"), 92)
+            loose   = _to_int(merge_result.get("fuzzy_threshold_loose"), 85)
+            require = _to_bool(merge_result.get("require_initial_match"), True)
 
-        template_roster = _coerce_list(merge_result.get("template_roster"))
-        timesheet_rows  = _coerce_list(merge_result.get("timesheet_rows"))
-        period          = merge_result.get("timesheet_period")
+            logger.info(
+                "merge-export | recompute with counts template=%s timesheet=%s strict=%s loose=%s require=%s",
+                len(template_roster), len(timesheet_rows), strict, loose, require
+            )
 
-        strict  = _to_int(merge_result.get("fuzzy_threshold_strict"), 92)
-        loose   = _to_int(merge_result.get("fuzzy_threshold_loose"), 85)
-        require = _to_bool(merge_result.get("require_initial_match"), True)
+            # On refait le merge avec la même fonction que /merge-intake
+            merge_result = merge_rows(
+                template_roster=template_roster,
+                timesheet_rows=timesheet_rows,
+                timesheet_period=period,
+                strict=strict,
+                loose=loose,
+                require_initials=require,
+            )
 
-        if not isinstance(template_roster, list) or not isinstance(timesheet_rows, list):
-            raise HTTPException(status_code=400, detail="template_roster and timesheet_rows must be lists")
+            logger.info(
+                "merge-export | recompute done: matched=%s missing_client=%s missing_roster=%s ambiguous=%s",
+                len(merge_result.get("matched_rows") or []),
+                len(merge_result.get("missing_in_client") or []),
+                len(merge_result.get("missing_in_roster") or []),
+                len(merge_result.get("ambiguous") or []),
+            )
 
-        # On refait le merge ici
-        merge_result = merge_rows(
-            template_roster=template_roster,
-            timesheet_rows=timesheet_rows,
-            timesheet_period=period,
-            strict=strict,
-            loose=loose,
-            require_initials=require,
-        )
+        except Exception as e:
+            logger.error("merge-export | error while recomputing merge_rows: %s", e)
 
-        logger.info(
-            "merge-export | recomputed merge_rows: matched=%s missing_client=%s missing_roster=%s ambiguous=%s",
-            len(merge_result.get("matched_rows") or []),
-            len(merge_result.get("missing_in_client") or []),
-            len(merge_result.get("missing_in_roster") or []),
-            len(merge_result.get("ambiguous") or []),
-        )
-
-    # ---------- CAS 1 : on a déjà un vrai résultat de merge ----------
-    matched    = merge_result.get("matched_rows") or []
+    # 2) A ce stade, merge_result est censé contenir les clés du résultat de merge_rows
+    matched     = merge_result.get("matched_rows") or []
     miss_client = merge_result.get("missing_in_client") or []
     miss_roster = merge_result.get("missing_in_roster") or []
     ambiguous   = merge_result.get("ambiguous") or []
@@ -816,21 +825,20 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
 
     for sheet_name, data in sections:
         ws = wb.create_sheet(title=sheet_name)
-
         if not isinstance(data, list) or not data:
             continue
 
+        # On récupère toutes les colonnes présentes dans cette section
         headers = sorted({
             k
             for row in data
             if isinstance(row, dict)
             for k in row.keys()
         })
-
         if not headers:
             continue
 
-        # En-têtes
+        # En-tête
         ws.append(headers)
         # Lignes
         for row in data:
@@ -841,7 +849,6 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     # Onglet Stats
     ws_stats = wb.create_sheet(title="Stats")
     ws_stats.append(["metric", "value"])
-    ws_stats.append(["raw_keys", ", ".join(list(merge_result.keys()))])
     ws_stats.append(["matched_rows_count", len(matched)])
     ws_stats.append(["missing_in_client_count", len(miss_client)])
     ws_stats.append(["missing_in_roster_count", len(miss_roster)])
@@ -857,11 +864,10 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     wb.save(buf)
     buf.seek(0)
 
-    filename = "merge_export.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f'attachment; filename=\"{filename}\"'
+            "Content-Disposition": 'attachment; filename="merge_export.xlsx"'
         },
     )
