@@ -689,7 +689,7 @@ async def merge_intake(request: Request):
     )
     return result
 
-# ─────────────────────────── Export Excel (à partir de /merge-intake ou de l'input brut) ───────────────────────────
+# ─────────────────────────── Export Excel (résultat merge) ───────────────────────────
 
 @app.post("/merge-export")
 async def merge_export(merge_result: Dict[str, Any] = Body(...)):
@@ -726,7 +726,6 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     except Exception:
         pass
 
-    # Clés attendues quand on a déjà le résultat du merge
     expected_keys = {
         "matched_rows",
         "missing_in_client",
@@ -735,12 +734,12 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
         "stats",
     }
 
-    # 1) Si aucune des clés "résultat" n'est là, mais qu'on a template_roster + timesheet_rows,
-    #    on refait le merge ici.
+    # 1) Si on n'a PAS les clés de résultat mais qu'on a template_roster + timesheet_rows,
+    #    on refait le merge nous-mêmes (cas où le front envoie encore l'input brut).
     if not any(k in merge_result for k in expected_keys) and \
        "template_roster" in merge_result and "timesheet_rows" in merge_result:
         try:
-            logger.info("merge-export | detected raw input (template_roster + timesheet_rows) → recompute merge_rows")
+            logger.info("merge-export | detected raw input → recompute merge_rows")
 
             def _coerce_list(v):
                 if v is None:
@@ -784,7 +783,6 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
                 len(template_roster), len(timesheet_rows), strict, loose, require
             )
 
-            # On refait le merge avec la même fonction que /merge-intake
             merge_result = merge_rows(
                 template_roster=template_roster,
                 timesheet_rows=timesheet_rows,
@@ -805,7 +803,7 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
         except Exception as e:
             logger.error("merge-export | error while recomputing merge_rows: %s", e)
 
-    # 2) A ce stade, merge_result est censé contenir les clés du résultat de merge_rows
+    # 2) À ce stade on est censés avoir un vrai résultat de merge_rows
     matched     = merge_result.get("matched_rows") or []
     miss_client = merge_result.get("missing_in_client") or []
     miss_roster = merge_result.get("missing_in_roster") or []
@@ -816,19 +814,78 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
     default_ws = wb.active
     wb.remove(default_ws)
 
-    sections = [
-        ("Matched", matched),
-        ("Missing in Client", miss_client),
-        ("Missing in Roster", miss_roster),
-        ("Ambiguous", ambiguous),
+    # ───────────── FEUILLE "Matched" AU FORMAT ROSTER PAIE ─────────────
+
+    ws_matched = wb.create_sheet(title="Matched")
+
+    # (clé_dans_JSON, en-tête_excel)
+    template_columns = [
+        ("matricule_salarie",       "Matricule"),
+        ("matricule_client",        "Matricule Client"),
+        ("nombre",                  "Nombre"),
+        ("nom",                     "Nom"),
+        ("prenom",                  "Prénom"),
+        ("num_contrat",             "N° Contrat"),
+        ("num_avenant",            "N° Avenant"),
+        ("date_debut",              "Date debut"),
+        ("date_fin",                "Date fin"),
+        ("service",                 "Service"),
+        ("nb_jt",                   "NB JT"),
+        ("nb_ji",                   "NB JI"),
+        ("nb_cp_280",               "280 - NB CP"),
+        ("nb_sans_solde",           "NB Sans Solde"),
+        ("nb_jf",                   "NB JF"),
+        ("tx_sal",                  "Tx Sal"),
+        ("hrs_norm_010",            "010 - HRS NORM"),
+        ("rappel_hrs_norm_140",     "140 - Rappel HRS NORM"),
+        ("hs_25_020",               "020 - HS 25%"),
+        ("hs_50_030",               "030 - HS 50%"),
+        ("hs_100_050",              "050 - HS 100%"),
+        ("hrs_feries_091",          "091 - HRS FERIES"),
+        ("observations",            "Observations"),
+        ("fin_mission",             "Fin Mission (Oui/Non)"),
     ]
 
-    for sheet_name, data in sections:
+    # Ligne d'en-têtes EXACTEMENT dans l'ordre du roster
+    ws_matched.append([label for _, label in template_columns])
+
+    def _get_val(row: Dict[str, Any], key: str):
+        # Petits ponts pour les heures si besoin
+        if key == "hrs_norm_010":
+            return (
+                row.get("hrs_norm_010")
+                or row.get("heures_norm_dec")
+                or row.get("heures_travaillees_decimal")
+            )
+        if key == "hs_25_020":
+            return row.get("hs_25_020") or row.get("hs_25_dec")
+        if key == "hs_50_030":
+            return row.get("hs_50_030") or row.get("hs_50_dec")
+        if key == "hs_100_050":
+            return row.get("hs_100_050") or row.get("hs_100_dec")
+        if key == "hrs_feries_091":
+            return row.get("hrs_feries_091") or row.get("hs_feries_dec")
+        return row.get(key, "")
+
+    for row in matched:
+        ws_matched.append([
+            _get_val(row, key)
+            for key, _ in template_columns
+        ])
+
+    # ───────────── AUTRES FEUILLES (debug générique) ─────────────
+
+    other_sections = [
+        ("Missing in Client", miss_client),
+        ("Missing in Roster", miss_roster),
+        ("Ambiguous",        ambiguous),
+    ]
+
+    for sheet_name, data in other_sections:
         ws = wb.create_sheet(title=sheet_name)
         if not isinstance(data, list) or not data:
             continue
 
-        # On récupère toutes les colonnes présentes dans cette section
         headers = sorted({
             k
             for row in data
@@ -838,15 +895,14 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
         if not headers:
             continue
 
-        # En-tête
         ws.append(headers)
-        # Lignes
         for row in data:
             if not isinstance(row, dict):
                 continue
             ws.append([row.get(h, "") for h in headers])
 
-    # Onglet Stats
+    # ───────────── FEUILLE STATS ─────────────
+
     ws_stats = wb.create_sheet(title="Stats")
     ws_stats.append(["metric", "value"])
     ws_stats.append(["matched_rows_count", len(matched)])
