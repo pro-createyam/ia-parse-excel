@@ -821,7 +821,7 @@ async def merge_export(merge_result: Dict[str, Any] = Body(...)):
 
     # ───────────── FEUILLE "Matched" AU FORMAT ROSTER PAIE ─────────────
 
-        ws_matched = wb.create_sheet(title="Matched")
+    ws_matched = wb.create_sheet(title="Matched")
 
     # ---- Entête fixe (RH / Mois / Période du / Coefficient) ----
 
