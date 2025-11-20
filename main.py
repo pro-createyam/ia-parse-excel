@@ -225,15 +225,30 @@ async def parse_excel_upload(
             "prenom": v_prenom,
             "cin": v_cin,
             "date": v_date,
+
+            # heures normales
             "heures_travaillees_decimal": h_norm,
+            "heures_norm_dec": h_norm,          # alias exploitable par le merge
+
+            # heures sup détaillées
+            "hs_25_dec": hs25,
+            "hs_50_dec": hs50,
+            "hs_100_dec": hs100,
+            "hs_feries_dec": hfer,
+
+            # agrégats legacy (tu peux les garder si utile ailleurs)
             "hs_normales": hs_normales_agg,
             "hs_ferie": hfer,
-            "nb_jt": nb_jt_days,               # jours saisis
-            "jours_calcules": jours_calcules,  # si seulement heures
-            "heures_calculees": heures_calculees,  # si seulement jours
+
+            # jours
+            "nb_jt": nb_jt_days,
+            "jours_calcules": jours_calcules,
+            "heures_calculees": heures_calculees,
+
             "demi_journee": demi_j,
             "raw_body_text": raw_body_text,
         })
+
 
     return {
         "rules_used": rules_dict,
@@ -431,14 +446,17 @@ async def timesheet_intake(
     base_detected = _detect_columns(headers_dict)
 
     # Ponts d’alias
+    base_detected = _detect_columns(headers_dict)
+
+    # Ponts d’alias
     def _resolve_detected(d: Dict[str, str]) -> Dict[str, str]:
         out = dict(d)
         alias_bridge = {
-            "heures_norm": ["hrs_norm_010"],
-            "hs_25": ["hs_25_020"],
-            "hs_50": ["hs_50_030"],
-            "hs_100": ["hs_100_050"],
-            "hs_feries": ["hrs_feries_091"],
+            "heures_norm": ["hrs_norm_010", "heures_norm_dec"],
+            "hs_25": ["hs_25_020", "hs_25_dec"],
+            "hs_50": ["hs_50_030", "hs_50_dec"],
+            "hs_100": ["hs_100_050", "hs_100_dec"],
+            "hs_feries": ["hrs_feries_091", "hs_feries_dec"],
             "date": ["date_debut"],
         }
         for target, aliases in alias_bridge.items():
