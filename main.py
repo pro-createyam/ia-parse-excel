@@ -446,9 +446,6 @@ async def timesheet_intake(
     base_detected = _detect_columns(headers_dict)
 
     # Ponts d’alias
-    base_detected = _detect_columns(headers_dict)
-
-    # Ponts d’alias
     def _resolve_detected(d: Dict[str, str]) -> Dict[str, str]:
         out = dict(d)
         alias_bridge = {
