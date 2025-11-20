@@ -109,6 +109,14 @@ async def parse_excel_upload(
     COL_ABS = detected.get("absence")
     # Jours (compteur direct côté client)
     COL_NBJT = detected.get("nb_jt")
+        # Autres compteurs de jours / paramètres paie
+    COL_NBJI        = detected.get("nb_ji")
+    COL_NBCP_280    = detected.get("nb_cp_280")
+    COL_NBSANS_SOLDE = detected.get("nb_sans_solde")
+    COL_NBJF        = detected.get("nb_jf")
+    COL_TX_SAL      = detected.get("tx_sal")
+    COL_RAPPEL140   = detected.get("rappel_hrs_norm_140")
+
 
     rows: List[Dict[str, Any]] = []
     start = max(1, header_row_index + 1)
@@ -182,6 +190,43 @@ async def parse_excel_upload(
             except Exception:
                 nb_jt_val_raw = None
         nb_jt_days = _parse_days(nb_jt_val_raw)
+        # Autres compteurs (si présents dans le fichier)
+        nb_ji_val = None
+        if COL_NBJI:
+            try:
+                nb_ji_val = _parse_days(ws[f"{COL_NBJI}{r}"].value)
+            except Exception:
+                nb_ji_val = None
+
+        nb_cp_280_val = None
+        if COL_NBCP_280:
+            try:
+                nb_cp_280_val = _parse_days(ws[f"{COL_NBCP_280}{r}"].value)
+            except Exception:
+                nb_cp_280_val = None
+
+        nb_sans_solde_val = None
+        if COL_NBSANS_SOLDE:
+            try:
+                nb_sans_solde_val = _parse_days(ws[f"{COL_NBSANS_SOLDE}{r}"].value)
+            except Exception:
+                nb_sans_solde_val = None
+
+        nb_jf_val = None
+        if COL_NBJF:
+            try:
+                nb_jf_val = _parse_days(ws[f"{COL_NBJF}{r}"].value)
+            except Exception:
+                nb_jf_val = None
+
+        tx_sal_val = None
+        if COL_TX_SAL:
+            try:
+                tx_sal_val = ws[f"{COL_TX_SAL}{r}"].value
+            except Exception:
+                tx_sal_val = None
+
+        rappel_hrs_norm_140_val = _hours_at(r, COL_RAPPEL140) if COL_RAPPEL140 else None
 
         # Demi-journée (absence)
         abs_raw = None
@@ -228,7 +273,7 @@ async def parse_excel_upload(
 
             # heures normales
             "heures_travaillees_decimal": h_norm,
-            "heures_norm_dec": h_norm,          # alias exploitable par le merge
+            "heures_norm_dec": h_norm,
 
             # heures sup détaillées
             "hs_25_dec": hs25,
@@ -236,15 +281,22 @@ async def parse_excel_upload(
             "hs_100_dec": hs100,
             "hs_feries_dec": hfer,
 
-            # agrégats legacy (tu peux les garder si utile ailleurs)
             "hs_normales": hs_normales_agg,
             "hs_ferie": hfer,
 
             # jours
             "nb_jt": nb_jt_days,
+            "nb_ji": nb_ji_val,
+            "nb_cp_280": nb_cp_280_val,
+            "nb_sans_solde": nb_sans_solde_val,
+            "nb_jf": nb_jf_val,
+
+            # salaire & rappel
+            "tx_sal": tx_sal_val,
+            "rappel_hrs_norm_140": rappel_hrs_norm_140_val,
+
             "jours_calcules": jours_calcules,
             "heures_calculees": heures_calculees,
-
             "demi_journee": demi_j,
             "raw_body_text": raw_body_text,
         })
