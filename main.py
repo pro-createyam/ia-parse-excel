@@ -109,13 +109,13 @@ async def parse_excel_upload(
     COL_ABS = detected.get("absence")
     # Jours (compteur direct côté client)
     COL_NBJT = detected.get("nb_jt")
-        # Autres compteurs de jours / paramètres paie
-    COL_NBJI        = detected.get("nb_ji")
-    COL_NBCP_280    = detected.get("nb_cp_280")
+    # Autres compteurs de jours / paramètres paie
+    COL_NBJI         = detected.get("nb_ji")
+    COL_NBCP_280     = detected.get("nb_cp_280")
     COL_NBSANS_SOLDE = detected.get("nb_sans_solde")
-    COL_NBJF        = detected.get("nb_jf")
-    COL_TX_SAL      = detected.get("tx_sal")
-    COL_RAPPEL140   = detected.get("rappel_hrs_norm_140")
+    COL_NBJF         = detected.get("nb_jf")
+    COL_TX_SAL       = detected.get("tx_sal")
+    COL_RAPPEL140    = detected.get("rappel_hrs_norm_140")
 
 
     rows: List[Dict[str, Any]] = []
