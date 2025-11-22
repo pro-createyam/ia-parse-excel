@@ -122,8 +122,24 @@ async def parse_excel_upload(
     COL_RAPPEL140    = detected.get("rappel_hrs_norm_140")
     COL_OBSERVATIONS = detected.get("observations")
     COL_FIN_MISSION  = detected.get("fin_mission")
+    # --- FALLBACK HEURISTIQUE pour NB Sans Solde & NB JF ---
+    # Si la détection fuzzy n'a pas trouvé nb_sans_solde ou nb_jf,
+    # on scanne directement les intitulés d'entête.
+    if not COL_NBSANS_SOLDE:
+        for col_letter, header_text in headers.items():
+            norm = _normalize(header_text)
+            # Cherche quelque chose du style "sans solde", "ss solde", etc.
+            if "sans" in norm and "solde" in norm:
+                COL_NBSANS_SOLDE = col_letter
+                break
 
-
+    if not COL_NBJF:
+        for col_letter, header_text in headers.items():
+            norm = _normalize(header_text)
+            # Cherche "jf" ou "jour ferie" ou assimilé
+            if "jf" in norm or "ferie" in norm or "féri" in norm:
+                COL_NBJF = col_letter
+                break
 
     rows: List[Dict[str, Any]] = []
     start = max(1, header_row_index + 1)
