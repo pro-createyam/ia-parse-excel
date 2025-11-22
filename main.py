@@ -98,7 +98,11 @@ async def parse_excel_upload(
     COL_DATE = detected.get("date")
 
     # Heures normales : accepte 'heures_norm' (timesheet) ou code paie 'hrs_norm_010'
-    COL_HN = detected.get("heures_norm") or detected.get("hrs_norm_010")
+    COL_HN = (
+    detected.get("heures_norm")
+    or detected.get("hrs_norm_010")
+    or detected.get("heures_norm_dec")
+    )
     # Heures sup décomposées
     COL_HS25 = detected.get("hs_25") or detected.get("hs_25_020")
     COL_HS50 = detected.get("hs_50") or detected.get("hs_50_030")
