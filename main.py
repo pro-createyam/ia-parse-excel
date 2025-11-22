@@ -230,7 +230,6 @@ async def parse_excel_upload(
                 tx_sal_val = None
 
         rappel_hrs_norm_140_val = _hours_at(r, COL_RAPPEL140) if COL_RAPPEL140 else None
-                tx_sal_val = None
 
         # --- NOUVEAU : Observations + Fin de mission ---
         observations_val = None
@@ -321,12 +320,7 @@ async def parse_excel_upload(
             "observations": observations_val,
             "fin_mission": fin_mission_val,
 
-            "jours_calcules": jours_calcules,
-            "heures_calculees": heures_calculees,
-            "demi_journee": demi_j,
-            "raw_body_text": raw_body_text,
         })
-
 
     return {
         "rules_used": rules_dict,
