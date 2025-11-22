@@ -324,11 +324,13 @@ TARGET_SYNONYMS = {
         "conge paye", "jours cp", "nb cp", "paid leave",
     ],
     "nb_sans_solde": [
-        "sans solde", "conge sans solde", "css", "unpaid leave", "conge non paye",
-        "non paye", "non payé", "unpaid",
+        "nb sans solde", "nombre sans solde",
+        "sans solde", "conge sans solde", "css", "unpaid leave",
+        "conge non paye", "conge non payé", "non paye", "non payé", "unpaid",
     ],
     "nb_jf": [
-        "nb jf", "jours feries", "jours fériés", "public holidays", "jf",
+        "nb jf", "nb jours feries", "nb jours fériés",
+        "jours feries", "jours fériés", "public holidays", "jf",
         "jours ferie", "jour ferié", "jours férié", "feriados", "public holiday days",
     ],
     "tx_sal": [
@@ -407,6 +409,8 @@ TARGET_SYNONYMS = {
         "heures", "heures travaillees", "heures travaillées", "nbr heures",
         "hours worked", "h. normal", "heures jour", "total heures",
         "temps de travail", "duree travail", "durée travail", "worked hours",
+        # pour les fichiers où la colonne s'appelle exactement comme ça :
+        "heures_norm_dec", "heures norm dec",
     ],
     "hs_25": ["hs 25", "heures sup 25", "maj 25", "overtime 25", "ot 25", "25%", "o/t 25"],
     "hs_50": ["hs 50", "heures sup 50", "maj 50", "overtime 50", "ot 50", "50%", "o/t 50"],
