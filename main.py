@@ -116,6 +116,9 @@ async def parse_excel_upload(
     COL_NBJF         = detected.get("nb_jf")
     COL_TX_SAL       = detected.get("tx_sal")
     COL_RAPPEL140    = detected.get("rappel_hrs_norm_140")
+    COL_OBSERVATIONS = detected.get("observations")
+    COL_FIN_MISSION  = detected.get("fin_mission")
+
 
 
     rows: List[Dict[str, Any]] = []
@@ -227,6 +230,22 @@ async def parse_excel_upload(
                 tx_sal_val = None
 
         rappel_hrs_norm_140_val = _hours_at(r, COL_RAPPEL140) if COL_RAPPEL140 else None
+                tx_sal_val = None
+
+        # --- NOUVEAU : Observations + Fin de mission ---
+        observations_val = None
+        if COL_OBSERVATIONS:
+            try:
+                observations_val = ws[f"{COL_OBSERVATIONS}{r}"].value
+            except Exception:
+                observations_val = None
+
+        fin_mission_val = None
+        if COL_FIN_MISSION:
+            try:
+                fin_mission_val = ws[f"{COL_FIN_MISSION}{r}"].value
+            except Exception:
+                fin_mission_val = None
 
         # Demi-journée (absence)
         abs_raw = None
@@ -294,6 +313,13 @@ async def parse_excel_upload(
             # salaire & rappel
             "tx_sal": tx_sal_val,
             "rappel_hrs_norm_140": rappel_hrs_norm_140_val,
+
+            "jours_calcules": jours_calcules,
+            "heures_calculees": heures_calculees,
+            "demi_journee": demi_j,
+            "raw_body_text": raw_body_text,
+            "observations": observations_val,
+            "fin_mission": fin_mission_val,
 
             "jours_calcules": jours_calcules,
             "heures_calculees": heures_calculees,
