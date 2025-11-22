@@ -159,7 +159,9 @@ TAKE_FROM_TS = [
     "heures_norm_dec","heures_travaillees_decimal","rappel_hrs_norm_140",
     "hs_25_dec","hs_50_dec","hs_100_dec","hs_feries_dec",
     "ind_panier_771","ind_transport_777","ind_deplacement_780",
-    "heures_jour_ferie_chome_090","observations","fin_mission"
+    "heures_jour_ferie_chome_090","observations","fin_mission",
+    # CHAMPS CALCULÉS (parse-excel-upload)
+    "jours_calcules","heures_calculees",
 ]
 
 def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -> Dict[str, Any]:
@@ -174,12 +176,16 @@ def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -
     if out.get("heures_norm_dec") is None and ts.get("heures_travaillees_decimal") is not None:
         out["heures_norm_dec"] = ts.get("heures_travaillees_decimal")
 
+    #    - Si toujours vide mais qu'on a un calcul heures_calculees (jours -> heures), on le recycle
+    if out.get("heures_norm_dec") is None and ts.get("heures_calculees") is not None:
+        out["heures_norm_dec"] = ts.get("heures_calculees")
+
     # 4) Création explicite du champ au format template paie : 010 - HRS NORM
-    #    (utilisé dans merge-export pour remplir la colonne '010 - HRS NORM')
     out["hrs_norm_010"] = (
         ts.get("hrs_norm_010")           # si jamais le TS l'a déjà
-        or out.get("heures_norm_dec")    # sinon on prend la décimale
+        or out.get("heures_norm_dec")    # sinon on prend la décimale (inclut heures_calculees)
         or out.get("heures_travaillees_decimal")
+        or ts.get("heures_calculees")    # dernier filet de sécurité
     )
 
     # 5) Métadonnées de matching
