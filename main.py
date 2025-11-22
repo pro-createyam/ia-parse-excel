@@ -628,7 +628,9 @@ async def timesheet_intake(
         # Heures et jours (nb_jt)
         h_norm = _parse_hours_to_decimal(_val_at(r, "heures_norm"))
         nb_jt_val = _parse_days(_val_at(r, "nb_jt"))
-
+        # Nouveaux compteurs de jours ↓↓↓
+        nb_sans_solde_val = _parse_days(_val_at(r, "nb_sans_solde"))
+        nb_jf_val = _parse_days(_val_at(r, "nb_jf"))
         # Conversions heures ↔ jours
         jours_calc: Optional[float] = None
         heures_from_days: Optional[float] = None
@@ -653,18 +655,28 @@ async def timesheet_intake(
             "prenom": prenom_v,
             "service": _val_at(r, "service"),
             "date": row_date,
+
+            # Heures
             "heures_norm_dec": h_norm,
             "hs_25_dec": _parse_hours_to_decimal(_val_at(r, "hs_25")),
             "hs_50_dec": _parse_hours_to_decimal(_val_at(r, "hs_50")),
             "hs_100_dec": _parse_hours_to_decimal(_val_at(r, "hs_100")),
             "hs_feries_dec": _parse_hours_to_decimal(_val_at(r, "hs_feries")),
-            "nb_jt": nb_jt_val,                 # <-- lecture directe des jours saisis
-            "jours_calc": jours_calc,           # <-- calcul si seulement heures
-            "heures_from_days": heures_from_days,  # <-- calcul si seulement jours
+
+            # Jours
+            "nb_jt": nb_jt_val,
+            "nb_sans_solde": nb_sans_solde_val,   # <-- AJOUTÉ
+            "nb_jf": nb_jf_val,                   # <-- AJOUTÉ
+
+            # Conversions
+            "jours_calc": jours_calc,
+            "heures_from_days": heures_from_days,
+
             "demi_journee": demi_j,
             "is_holiday": is_holiday,
             "observations": _val_at(r, "observations"),
         })
+
 
     # Warnings
     warnings: List[str] = []
