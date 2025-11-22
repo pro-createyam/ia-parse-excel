@@ -163,15 +163,29 @@ TAKE_FROM_TS = [
 ]
 
 def _merge_one(ref: Dict[str, Any], ts: Dict[str, Any], mode: str, score: int) -> Dict[str, Any]:
+    # 1) Base : infos roster (référentiel)
     out = {k: ref.get(k) for k in KEEP_FROM_REF}
+
+    # 2) Infos issues du timesheet
     out.update({k: ts.get(k) for k in TAKE_FROM_TS})
 
-    # Garantit heures_norm_dec même si seul 'heures_travaillees_decimal' est fourni
+    # 3) Normalisation heures normales (décimal)
+    #    - Si heures_norm_dec est vide mais qu'on a heures_travaillees_decimal, on copie
     if out.get("heures_norm_dec") is None and ts.get("heures_travaillees_decimal") is not None:
         out["heures_norm_dec"] = ts.get("heures_travaillees_decimal")
 
+    # 4) Création explicite du champ au format template paie : 010 - HRS NORM
+    #    (utilisé dans merge-export pour remplir la colonne '010 - HRS NORM')
+    out["hrs_norm_010"] = (
+        ts.get("hrs_norm_010")           # si jamais le TS l'a déjà
+        or out.get("heures_norm_dec")    # sinon on prend la décimale
+        or out.get("heures_travaillees_decimal")
+    )
+
+    # 5) Métadonnées de matching
     out["match_mode"] = mode
     out["match_score"] = int(round(float(score)))  # score entier lisible
+
     return out
 
 def merge_rows(
