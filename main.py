@@ -23,7 +23,7 @@ app = create_app()
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 
 
-# ─────────────────────────── Legacy endpoint (utilisé dans Bubble actuellement)
+# ─────────────────────────── Legacy endpoint 
 @app.post("/parse-excel-upload")
 async def parse_excel_upload(
     file: UploadFile = File(...),
